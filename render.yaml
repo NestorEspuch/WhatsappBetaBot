@@ -1,0 +1,23 @@
+services:
+  - type: web
+    name: whatsapp-beta-monitor
+    runtime: python
+    region: frankfurt
+    plan: free
+    buildCommand: pip install -r requirements.txt
+    startCommand: python bot.py
+    envVars:
+      - key: TELEGRAM_BOT_TOKEN
+        sync: false
+      - key: TELEGRAM_CHAT_ID
+        sync: false
+      - key: TESTFLIGHT_URL
+        value: https://testflight.apple.com/join/YcmGWyxV
+      - key: WABETAINFO_URL
+        value: https://wabetainfo.com/wa-testflight/
+      - key: MIN_INTERVAL
+        value: "2"
+      - key: MAX_INTERVAL
+        value: "30"
+      - key: URL_REFRESH_INTERVAL
+        value: "1800"
