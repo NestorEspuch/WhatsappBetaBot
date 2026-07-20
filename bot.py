@@ -24,6 +24,11 @@ import time
 from datetime import datetime, timezone, timedelta
 from typing import Optional
 
+SPAIN_TZ = timezone(timedelta(hours=2))
+
+def local_now() -> datetime:
+    return datetime.now(SPAIN_TZ)
+
 import httpx
 from dotenv import load_dotenv
 
@@ -134,8 +139,12 @@ async def check_testflight_status(client: httpx.AsyncClient, url: str) -> str:
 
         if "This beta is full" in text:
             return "full"
-        if "This beta isn't accepting any new testers" in text:
+        if "isn" in text and "accepting" in text and "tester" in text:
             return "full"
+
+        if "Accept" not in text and "Open TestFlight" not in text:
+            logger.debug("Page doesn't look like a TestFlight beta page")
+            return "unknown"
 
         return "open"
     except httpx.HTTPStatusError as exc:
@@ -201,49 +210,49 @@ async def get_updates(client: httpx.AsyncClient) -> list[dict]:
 async def notify_slot_available(client: httpx.AsyncClient, url: str):
     await send_message(
         client, TELEGRAM_CHAT_ID,
-        "🎉 <b>¡Hueco libre en WhatsApp Beta iOS!</b>\n\n"
-        f"📱 <b>WhatsApp Messenger Beta</b>\n"
-        f"🔗 <a href=\"{url}\">Abrir en TestFlight</a>\n\n"
-        f"⏰ Detectado: {datetime.now(timezone.utc).strftime('%H:%M:%S UTC')}\n\n"
-        "⚠️ Ábrelo en tu iPhone y acepta YA antes de que se llene.",
+        "<b>Hueco libre en WhatsApp Beta iOS</b>\n\n"
+        f"<b>App:</b> WhatsApp Messenger Beta\n"
+        f"<b>Link:</b> <a href=\"{url}\">Abrir en TestFlight</a>\n\n"
+        f"<b>Detectado:</b> {local_now().strftime('%H:%M:%S')} (España)\n\n"
+        "Abre el link en tu iPhone y acepta antes de que se llene.",
     )
 
 
 async def notify_slot_filled(client: httpx.AsyncClient, url: str):
     await send_message(
         client, TELEGRAM_CHAT_ID,
-        "🔴 <b>WhatsApp Beta iOS — Se llenó de nuevo</b>\n\n"
-        f"🔗 {url}\n\n"
-        "Seguimos monitorizando para el próximo hueco.",
+        "<b>WhatsApp Beta — Se lleno de nuevo</b>\n\n"
+        f"<b>Link:</b> {url}\n\n"
+        "Seguimos monitorizando.",
     )
 
 
 async def notify_url_changed(client: httpx.AsyncClient, old_url: str, new_url: str):
     await send_message(
         client, TELEGRAM_CHAT_ID,
-        "🔄 <b>WhatsApp Beta URL actualizada automáticamente</b>\n\n"
+        "<b>URL de WhatsApp Beta actualizada</b>\n\n"
         f"<b>Anterior:</b> {old_url}\n"
         f"<b>Nuevo:</b> {new_url}\n\n"
-        "El bot ya está monitorizando la nueva URL.",
+        "El bot ya esta monitorizando la nueva URL.",
     )
 
 
 async def notify_consecutive_errors(client: httpx.AsyncClient, count: int, error_msg: str):
     await send_message(
         client, TELEGRAM_CHAT_ID,
-        f"⚠️ <b>Alerta: {count} errores consecutivos</b>\n\n"
-        f"<b>Último error:</b> {error_msg}\n"
-        f"<b>Hora:</b> {datetime.now(timezone.utc).strftime('%H:%M:%S UTC')}",
+        f"<b>Alerta: {count} errores consecutivos</b>\n\n"
+        f"<b>Ultimo error:</b> {error_msg}\n"
+        f"<b>Hora:</b> {local_now().strftime('%H:%M:%S')} (España)",
     )
 
 
 async def notify_recovered(client: httpx.AsyncClient, error_msg: str, since: str):
     await send_message(
         client, TELEGRAM_CHAT_ID,
-        f"✅ <b>Monitor recuperado</b>\n\n"
+        "<b>Monitor recuperado</b>\n\n"
         f"Estuvo fallando desde las {since}\n"
-        f"<b>Último error:</b> {error_msg}\n"
-        f"<b>Recuperado:</b> {datetime.now(timezone.utc).strftime('%H:%M:%S UTC')}",
+        f"<b>Ultimo error:</b> {error_msg}\n"
+        f"<b>Recuperado:</b> {local_now().strftime('%H:%M:%S')} (Espana)",
     )
 
 
@@ -292,28 +301,35 @@ async def notify_status(client: httpx.AsyncClient, chat_id: str):
 class HealthHandler(http.server.BaseHTTPRequestHandler):
     """Minimal HTTP endpoint for Render / UptimeRobot health checks."""
 
+    def _respond_health(self):
+        self.send_response(200)
+        self.send_header("Content-Type", "application/json")
+        self.end_headers()
+        info = {
+            "status": "ok",
+            "monitored_url": current_testflight_url,
+            "last_status": last_status,
+            "total_checks": total_checks,
+            "consecutive_errors": consecutive_errors,
+            "uptime_seconds": int(time.time() - start_time),
+        }
+        self.wfile.write(json.dumps(info).encode())
+
     def do_GET(self):
         if self.path == "/health":
-            self.send_response(200)
-            self.send_header("Content-Type", "application/json")
-            self.end_headers()
-            info = {
-                "status": "ok",
-                "monitored_url": current_testflight_url,
-                "last_status": last_status,
-                "total_checks": total_checks,
-                "consecutive_errors": consecutive_errors,
-                "uptime_seconds": int(time.time() - start_time),
-            }
-            self.wfile.write(json.dumps(info).encode())
+            self._respond_health()
         else:
             self.send_response(200)
             self.send_header("Content-Type", "text/plain")
             self.end_headers()
             self.wfile.write(b"WhatsApp Beta Monitor - GET /health")
 
+    def do_HEAD(self):
+        if self.path == "/health":
+            self._respond_health()
+
     def log_message(self, fmt, *args):
-        logger.debug("Health check: %s %s %s", args[0], args[1], args[2])
+        logger.debug("Health check: %s", " ".join(str(a) for a in args))
 
 
 def run_health_server():
@@ -342,8 +358,9 @@ async def command_loop():
                         continue
 
                     if text == "/status":
-                        logger.info("Status requested via /status")
+                        logger.info("Status requested via /status from chat %s", chat_id)
                         await notify_status(client, chat_id)
+                        logger.info("Status response sent")
 
                     elif text.startswith("/"):
                         logger.debug("Unknown command: %s", text)
@@ -392,9 +409,9 @@ async def monitor_loop():
                         await notify_url_changed(client, old, discovered)
                         last_status = None
                     elif discovered:
-                        logger.debug("URL confirmed: %s", discovered)
+                        logger.info("URL confirmed: %s", discovered)
                     else:
-                        logger.debug("URL discovery returned nothing, keeping current")
+                        logger.info("URL discovery returned nothing, keeping current")
                     url_last_refreshed = time.time()
 
                 # ── Slot Status Check ──
@@ -430,7 +447,7 @@ async def monitor_loop():
                     last_known_error_reported = False
 
                 # --- Status transitions ---
-                logger.debug("Status: %s", status)
+                logger.info("Check #%d: %s", total_checks, status)
 
                 if status == "open" and last_status != "open":
                     logger.info("SLOTS AVAILABLE!")

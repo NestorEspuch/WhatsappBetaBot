@@ -12,7 +12,7 @@ Bot que monitoriza automáticamente la disponibilidad de la beta de **WhatsApp M
 │                                                          │
 │  1. GET httpx → https://testflight.apple.com/join/XXXXXX │
 │  2. Analiza el HTML de Apple                             │
-│  3. Si aparece "This beta is full" → está lleno          │
+│  3. Si reconoce "full" o "isn"+"accepting"+"tester" → lleno │
 │  4. Si NO aparece → ¡HAY HUECO! → Telegram YA            │
 │  5. Sleep random(2, 30) segundos                         │
 └─────────────────────────────────────────────────────────┘
@@ -33,10 +33,10 @@ El bot analiza el HTML que devuelve Apple en la URL de TestFlight:
 
 | Estado | Detección |
 |--------|-----------|
-| **Abierto** | El HTML *no* contiene "This beta is full" |
-| **Lleno** | El HTML contiene "This beta is full" o "This beta isn't accepting any new testers right now" |
+| **Abierto** | El HTML contiene "Accept" o "Open TestFlight", *no* contiene "This beta is full" ni los substrings "isn" + "accepting" + "tester" |
+| **Lleno** | El HTML contiene "This beta is full" O los substrings "isn" + "accepting" + "tester" (funciona aunque Apple escape el apóstrofe como `&#39;`) |
 | **Cerrado** | La URL responde 404 (el enlace ya no existe) |
-| **Desconocido** | Error de red o timeout |
+| **Desconocido** | Error de red, timeout, o la página no parece una beta de TestFlight |
 
 ### Anti-bloqueo
 
@@ -91,30 +91,30 @@ El bot monitoriza su propio estado y te avisa si algo va mal:
 Puedes consultar el estado del bot en cualquier momento enviando `/status` al bot de Telegram. Responde con:
 
 ```
-🤖 WhatsApp Beta Monitor
+WhatsApp Beta Monitor
 
-📡 URL: https://testflight.apple.com/join/YcmGWyxV
-🔴 Slot: full
-🕐 Último cambio: hace 12h 30min
-📊 Peticiones totales: 4,231
-❌ Errores consecutivos: 0
-📈 Max errores seguidos: 0
-🕐 Errores última hora: 0
-🔄 Último refresh URL: hace 3 min
-⏱ Uptime: 2 días 7h 31m
-🩺 Health: ✅ OK
+URL: https://testflight.apple.com/join/YcmGWyxV
+Slot: full
+Ultimo cambio: hace 12h 30min
+Peticiones totales: 4,231
+Errores consecutivos: 0
+Max errores seguidos: 0
+Errores ultima hora: 0
+Ultimo refresh URL: hace 3 min
+Uptime: 2 dias 7h 31m
+Health: OK
 ```
 
-Los emojis indican:
+Los indicadores de estado:
 
-| Icono | Estado |
-|-------|--------|
+| Indicador | Estado |
+|-----------|--------|
 | 🟢 | Hueco libre |
 | 🔴 | Beta llena |
 | ⚫ | Beta cerrada (404) |
 | ⚪ | Estado desconocido |
-| ✅ OK | Bot funcionando correctamente |
-| ❌ CAÍDO | Errores consecutivos detectados |
+| OK | Bot funcionando correctamente |
+| CAIDO | Errores consecutivos detectados |
 
 ### 5. Configurar variables de entorno
 
@@ -146,7 +146,8 @@ Deberías ver logs como:
 2026-07-18 12:00:00 [INFO] WhatsApp Beta Monitor started
 2026-07-18 12:00:00 [INFO] Initial URL: https://testflight.apple.com/join/YcmGWyxV
 2026-07-18 12:00:01 [INFO] Initial status: full
-2026-07-18 12:00:31 [DEBUG] Status: full
+2026-07-18 12:00:31 [INFO] Check #1: full
+2026-07-18 12:00:51 [INFO] Health check: GET /health 200 -
 ```
 
 ### 7. Desplegar en Render (gratis)
