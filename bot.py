@@ -4,6 +4,9 @@ WhatsApp Beta TestFlight Monitor Bot
 Dual-frequency monitoring: discovers the TestFlight URL from WABetaInfo
 every 30 min, and checks for available slots every 2-30 seconds.
 Sends Telegram notification the instant a slot opens.
+
+Commands (register via @BotFather):
+  /status - Show monitor status and stats
 """
 
 from __future__ import annotations
@@ -18,7 +21,7 @@ import re
 import signal
 import threading
 import time
-from datetime import datetime, timezone
+from datetime import datetime, timezone, timedelta
 from typing import Optional
 
 import httpx
@@ -42,6 +45,8 @@ MIN_INTERVAL = int(os.getenv("MIN_INTERVAL", "2"))
 MAX_INTERVAL = int(os.getenv("MAX_INTERVAL", "30"))
 URL_REFRESH_INTERVAL = int(os.getenv("URL_REFRESH_INTERVAL", "1800"))
 PORT = int(os.getenv("PORT", "8080"))
+POLL_INTERVAL = int(os.getenv("POLL_INTERVAL", "5"))
+ERROR_THRESHOLD = int(os.getenv("ERROR_THRESHOLD", "3"))
 
 USER_AGENTS = [
     "Mozilla/5.0 (iPhone; CPU iPhone OS 18_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/18.0 Mobile/15E148 Safari/604.1",
@@ -68,8 +73,21 @@ logger = logging.getLogger("wa-bot")
 
 current_testflight_url = DEFAULT_TESTFLIGHT_URL
 last_status: Optional[str] = None
+last_status_change: Optional[float] = None
 url_last_refreshed: float = 0.0
 start_time: float = time.time()
+
+total_checks: int = 0
+consecutive_errors: int = 0
+max_consecutive_errors: int = 0
+errors_last_hour: int = 0
+_last_error_reset: float = time.time()
+last_error_msg: Optional[str] = None
+last_error_time: Optional[float] = None
+last_known_error_reported: bool = False
+
+# offset for getUpdates polling (avoid re-processing old messages)
+_updates_offset: int = 0
 
 # ─── WABetaInfo URL Discovery ────────────────────────────────────────────────
 
@@ -129,65 +147,144 @@ async def check_testflight_status(client: httpx.AsyncClient, url: str) -> str:
         logger.error("Error checking %s: %s", url, exc)
         return "unknown"
 
-# ─── Telegram Notifications ──────────────────────────────────────────────────
+# ─── Telegram API helpers ────────────────────────────────────────────────────
 
-async def send_telegram(client: httpx.AsyncClient, message: str) -> bool:
-    """Send a message via the Telegram Bot API."""
-    if not TELEGRAM_BOT_TOKEN or not TELEGRAM_CHAT_ID:
-        logger.warning("Telegram not configured — skipping notification")
-        return False
+async def _telegram_request(
+    client: httpx.AsyncClient,
+    method: str,
+    payload: dict,
+) -> Optional[dict]:
+    """Raw call to the Telegram Bot API."""
+    if not TELEGRAM_BOT_TOKEN:
+        return None
+    url = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/{method}"
+    try:
+        response = await client.post(url, json=payload, timeout=10.0)
+        response.raise_for_status()
+        data = response.json()
+        if not data.get("ok"):
+            logger.warning("Telegram API error: %s", data.get("description"))
+            return None
+        return data
+    except Exception as exc:
+        logger.error("Telegram request failed (%s): %s", method, exc)
+        return None
 
-    api_url = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendMessage"
-    payload = {
-        "chat_id": TELEGRAM_CHAT_ID,
-        "text": message,
+
+async def send_message(client: httpx.AsyncClient, chat_id: str, text: str) -> bool:
+    """Send a text message to a Telegram chat."""
+    result = await _telegram_request(client, "sendMessage", {
+        "chat_id": chat_id,
+        "text": text,
         "parse_mode": "HTML",
         "disable_web_page_preview": False,
-    }
+    })
+    return result is not None
 
-    try:
-        response = await client.post(api_url, json=payload, timeout=10.0)
-        response.raise_for_status()
-        logger.info("Telegram notification sent")
-        return True
-    except Exception as exc:
-        logger.error("Failed to send Telegram: %s", exc)
-        return False
 
+async def get_updates(client: httpx.AsyncClient) -> list[dict]:
+    """Poll for incoming messages (commands)."""
+    global _updates_offset
+    result = await _telegram_request(client, "getUpdates", {
+        "offset": _updates_offset,
+        "timeout": POLL_INTERVAL,
+        "allowed_updates": ["message"],
+    })
+    if result and "result" in result:
+        for update in result["result"]:
+            _updates_offset = update["update_id"] + 1
+        return result["result"]
+    return []
+
+# ─── Notifications ───────────────────────────────────────────────────────────
 
 async def notify_slot_available(client: httpx.AsyncClient, url: str):
-    await send_telegram(
-        client,
-        (
-            "🎉 <b>¡Hueco libre en WhatsApp Beta iOS!</b>\n\n"
-            f"📱 <b>WhatsApp Messenger Beta</b>\n"
-            f"🔗 <a href=\"{url}\">Abrir en TestFlight</a>\n\n"
-            f"⏰ Detectado: {datetime.now(timezone.utc).strftime('%H:%M:%S UTC')}\n\n"
-            "⚠️ Ábrelo en tu iPhone y acepta YA antes de que se llene."
-        ),
+    await send_message(
+        client, TELEGRAM_CHAT_ID,
+        "🎉 <b>¡Hueco libre en WhatsApp Beta iOS!</b>\n\n"
+        f"📱 <b>WhatsApp Messenger Beta</b>\n"
+        f"🔗 <a href=\"{url}\">Abrir en TestFlight</a>\n\n"
+        f"⏰ Detectado: {datetime.now(timezone.utc).strftime('%H:%M:%S UTC')}\n\n"
+        "⚠️ Ábrelo en tu iPhone y acepta YA antes de que se llene.",
     )
 
 
 async def notify_slot_filled(client: httpx.AsyncClient, url: str):
-    await send_telegram(
-        client,
-        (
-            "🔴 <b>WhatsApp Beta iOS — Se llenó de nuevo</b>\n\n"
-            f"🔗 {url}\n\n"
-            "Seguimos monitorizando para el próximo hueco."
-        ),
+    await send_message(
+        client, TELEGRAM_CHAT_ID,
+        "🔴 <b>WhatsApp Beta iOS — Se llenó de nuevo</b>\n\n"
+        f"🔗 {url}\n\n"
+        "Seguimos monitorizando para el próximo hueco.",
     )
 
 
 async def notify_url_changed(client: httpx.AsyncClient, old_url: str, new_url: str):
-    await send_telegram(
-        client,
-        (
-            "🔄 <b>WhatsApp Beta URL actualizada automáticamente</b>\n\n"
-            f"<b>Anterior:</b> {old_url}\n"
-            f"<b>Nuevo:</b> {new_url}\n\n"
-            "El bot ya está monitorizando la nueva URL."
-        ),
+    await send_message(
+        client, TELEGRAM_CHAT_ID,
+        "🔄 <b>WhatsApp Beta URL actualizada automáticamente</b>\n\n"
+        f"<b>Anterior:</b> {old_url}\n"
+        f"<b>Nuevo:</b> {new_url}\n\n"
+        "El bot ya está monitorizando la nueva URL.",
+    )
+
+
+async def notify_consecutive_errors(client: httpx.AsyncClient, count: int, error_msg: str):
+    await send_message(
+        client, TELEGRAM_CHAT_ID,
+        f"⚠️ <b>Alerta: {count} errores consecutivos</b>\n\n"
+        f"<b>Último error:</b> {error_msg}\n"
+        f"<b>Hora:</b> {datetime.now(timezone.utc).strftime('%H:%M:%S UTC')}",
+    )
+
+
+async def notify_recovered(client: httpx.AsyncClient, error_msg: str, since: str):
+    await send_message(
+        client, TELEGRAM_CHAT_ID,
+        f"✅ <b>Monitor recuperado</b>\n\n"
+        f"Estuvo fallando desde las {since}\n"
+        f"<b>Último error:</b> {error_msg}\n"
+        f"<b>Recuperado:</b> {datetime.now(timezone.utc).strftime('%H:%M:%S UTC')}",
+    )
+
+
+async def notify_status(client: httpx.AsyncClient, chat_id: str):
+    """Respond to a /status command with current monitor state."""
+    uptime_delta = timedelta(seconds=int(time.time() - start_time))
+    uptime_str = str(uptime_delta).split(".")[0]
+
+    status_emoji = {"open": "🟢", "full": "🔴", "closed": "⚫", "unknown": "⚪"}
+    status_icon = status_emoji.get(last_status or "unknown", "⚪")
+
+    last_change_str = "—"
+    if last_status_change:
+        ago = int(time.time() - last_status_change)
+        if ago < 60:
+            last_change_str = f"hace {ago} s"
+        elif ago < 3600:
+            last_change_str = f"hace {ago // 60} min"
+        else:
+            last_change_str = f"hace {ago // 3600}h {(ago % 3600) // 60}min"
+
+    last_error_str = "—"
+    if last_error_time:
+        ago = int(time.time() - last_error_time)
+        last_error_str = f"hace {ago}s" if ago < 60 else f"hace {ago // 60}min"
+        if last_error_msg:
+            last_error_str += f" ({last_error_msg})"
+
+    await send_message(
+        client, chat_id,
+        "🤖 <b>WhatsApp Beta Monitor</b>\n\n"
+        f"📡 <b>URL:</b> {current_testflight_url}\n"
+        f"{status_icon} <b>Slot:</b> {last_status or 'desconocido'}\n"
+        f"🕐 <b>Último cambio:</b> {last_change_str}\n"
+        f"📊 <b>Peticiones totales:</b> {total_checks:,}\n"
+        f"❌ <b>Errores consecutivos:</b> {consecutive_errors}\n"
+        f"📈 <b>Max errores seguidos:</b> {max_consecutive_errors}\n"
+        f"🕐 <b>Errores última hora:</b> {errors_last_hour}\n"
+        f"🔄 <b>Último refresh URL:</b> {int((time.time() - url_last_refreshed) / 60) if url_last_refreshed > 0 else '—'} min\n"
+        f"⏱ <b>Uptime:</b> {uptime_str}\n"
+        f"🩺 <b>Health:</b> {'❌ CAÍDO' if consecutive_errors >= ERROR_THRESHOLD else '✅ OK'}",
     )
 
 # ─── Health HTTP Server ──────────────────────────────────────────────────────
@@ -204,6 +301,8 @@ class HealthHandler(http.server.BaseHTTPRequestHandler):
                 "status": "ok",
                 "monitored_url": current_testflight_url,
                 "last_status": last_status,
+                "total_checks": total_checks,
+                "consecutive_errors": consecutive_errors,
                 "uptime_seconds": int(time.time() - start_time),
             }
             self.wfile.write(json.dumps(info).encode())
@@ -222,20 +321,60 @@ def run_health_server():
     logger.info("Health server listening on port %d", PORT)
     server.serve_forever()
 
+# ─── Command Polling Loop ────────────────────────────────────────────────────
+
+async def command_loop():
+    """Poll Telegram for incoming commands every POLL_INTERVAL seconds."""
+    logger.info("Command poller started (every %d s)", POLL_INTERVAL)
+    async with httpx.AsyncClient(
+        timeout=httpx.Timeout(10.0),
+        limits=httpx.Limits(max_keepalive_connections=3),
+    ) as client:
+        while True:
+            try:
+                updates = await get_updates(client)
+                for update in updates:
+                    message = update.get("message", {})
+                    text = message.get("text", "")
+                    chat_id = str(message.get("chat", {}).get("id", ""))
+
+                    if not chat_id or not text:
+                        continue
+
+                    if text == "/status":
+                        logger.info("Status requested via /status")
+                        await notify_status(client, chat_id)
+
+                    elif text.startswith("/"):
+                        logger.debug("Unknown command: %s", text)
+
+            except Exception as exc:
+                logger.error("Command poll error: %s", exc)
+
+            await asyncio.sleep(POLL_INTERVAL)
+
 # ─── Main Monitoring Loop ────────────────────────────────────────────────────
 
 async def monitor_loop():
-    global current_testflight_url, last_status, url_last_refreshed
+    global current_testflight_url
+    global last_status
+    global last_status_change
+    global url_last_refreshed
+    global total_checks
+    global consecutive_errors
+    global max_consecutive_errors
+    global errors_last_hour
+    global _last_error_reset
+    global last_error_msg
+    global last_error_time
+    global last_known_error_reported
 
     logger.info("WhatsApp Beta Monitor started")
     logger.info("Initial URL: %s", current_testflight_url)
     logger.info("Check interval: %d-%d s", MIN_INTERVAL, MAX_INTERVAL)
-    logger.info(
-        "URL refresh interval: %d s (%d min)",
-        URL_REFRESH_INTERVAL,
-        URL_REFRESH_INTERVAL // 60,
-    )
+    logger.info("URL refresh interval: %d s (%d min)", URL_REFRESH_INTERVAL, URL_REFRESH_INTERVAL // 60)
     logger.info("WABetaInfo source: %s", WABETAINFO_URL)
+    logger.info("Error threshold: %d", ERROR_THRESHOLD)
 
     async with httpx.AsyncClient(
         timeout=httpx.Timeout(15.0),
@@ -260,35 +399,73 @@ async def monitor_loop():
 
                 # ── Slot Status Check ──
                 status = await check_testflight_status(client, current_testflight_url)
+
+                # --- Error tracking ---
+                # Reset errors_last_hour every 3600 s
+                if time.time() - _last_error_reset > 3600:
+                    errors_last_hour = 0
+                    _last_error_reset = time.time()
+
+                total_checks += 1
+
+                if status == "unknown":
+                    consecutive_errors += 1
+                    if consecutive_errors > max_consecutive_errors:
+                        max_consecutive_errors = consecutive_errors
+                    errors_last_hour += 1
+
+                    if consecutive_errors >= ERROR_THRESHOLD and not last_known_error_reported:
+                        err_msg = last_error_msg or f"Status unknown after {consecutive_errors} checks"
+                        await notify_consecutive_errors(client, consecutive_errors, err_msg)
+                        last_known_error_reported = True
+                else:
+                    if consecutive_errors >= ERROR_THRESHOLD and last_known_error_reported:
+                        await notify_recovered(
+                            client,
+                            last_error_msg or "unknown errors",
+                            datetime.fromtimestamp(last_error_time or time.time(), tz=timezone.utc)
+                            .strftime("%H:%M:%S UTC"),
+                        )
+                    consecutive_errors = 0
+                    last_known_error_reported = False
+
+                # --- Status transitions ---
                 logger.debug("Status: %s", status)
 
                 if status == "open" and last_status != "open":
                     logger.info("SLOTS AVAILABLE!")
                     await notify_slot_available(client, current_testflight_url)
                     last_status = "open"
+                    last_status_change = time.time()
 
                 elif status == "full" and last_status == "open":
                     logger.info("Slots filled up again")
                     await notify_slot_filled(client, current_testflight_url)
                     last_status = "full"
+                    last_status_change = time.time()
 
                 elif status == "closed" and last_status != "closed":
                     logger.warning("Beta link returned 404 — may be closed / expired")
                     last_status = "closed"
+                    last_status_change = time.time()
 
                 elif status == "full" and last_status is None:
                     logger.info("Initial status: full")
                     last_status = "full"
+                    last_status_change = time.time()
 
                 elif status == "open" and last_status is None:
                     logger.info("Initial status: open (already available)")
                     await notify_slot_available(client, current_testflight_url)
                     last_status = "open"
-
-                elif status == "unknown" and last_status != "unknown":
-                    logger.warning("Status unknown — possible network issue")
+                    last_status_change = time.time()
 
             except Exception as exc:
+                consecutive_errors += 1
+                if consecutive_errors > max_consecutive_errors:
+                    max_consecutive_errors = consecutive_errors
+                last_error_msg = str(exc)
+                last_error_time = time.time()
                 logger.error("Unexpected error in main loop: %s", exc)
 
             delay = random.randint(MIN_INTERVAL, MAX_INTERVAL)
@@ -298,24 +475,28 @@ async def monitor_loop():
 
 def shutdown(signum, frame):
     logger.info("Received signal %s, shutting down", signum)
-    sys.exit(0)
+    raise SystemExit(0)
+
+async def async_main():
+    await asyncio.gather(
+        monitor_loop(),
+        command_loop(),
+    )
 
 def main():
     signal.signal(signal.SIGTERM, shutdown)
     signal.signal(signal.SIGINT, shutdown)
 
     if not TELEGRAM_BOT_TOKEN or not TELEGRAM_CHAT_ID:
-        logger.warning(
-            "TELEGRAM_BOT_TOKEN and TELEGRAM_CHAT_ID must be set"
-        )
+        logger.warning("TELEGRAM_BOT_TOKEN and TELEGRAM_CHAT_ID must be set")
 
     thread = threading.Thread(target=run_health_server, daemon=True)
     thread.start()
 
     try:
-        asyncio.run(monitor_loop())
-    except KeyboardInterrupt:
-        logger.info("Shutdown by user")
+        asyncio.run(async_main())
+    except (KeyboardInterrupt, SystemExit):
+        logger.info("Shutdown")
 
 if __name__ == "__main__":
     main()

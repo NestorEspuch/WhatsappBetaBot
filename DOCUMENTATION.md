@@ -65,7 +65,58 @@ Apple no bloquea estas peticiones porque son las mismas que hace cualquier usuar
 4. Busca [@userinfobot](https://t.me/userinfobot) y envíale `/start`
 5. Te dará tu **Chat ID** numérico (algo como `123456789`)
 
-### 2. Configurar variables de entorno
+### 2. Registrar los comandos del bot
+
+Para que el bot responda a `/status`, registra los comandos con @BotFather:
+
+1. Abre Telegram y busca [@BotFather](https://t.me/BotFather)
+2. Envía: `/setcommands`
+3. Selecciona tu bot
+4. Envía la siguiente lista (una línea por comando):
+   ```
+   status - Ver estado del monitor
+   ```
+5. @BotFather confirmará con "Success!"
+
+### 3. Sistema de alertas de errores
+
+El bot monitoriza su propio estado y te avisa si algo va mal:
+
+- **3+ errores consecutivos** → Telegram con el error completo
+- **Recuperación** → Telegram cuando vuelve a funcionar
+- **Errores esporádicos** (1 sí, 1 no) → **no** se notifica (sin spam)
+
+### 4. Comando `/status`
+
+Puedes consultar el estado del bot en cualquier momento enviando `/status` al bot de Telegram. Responde con:
+
+```
+🤖 WhatsApp Beta Monitor
+
+📡 URL: https://testflight.apple.com/join/YcmGWyxV
+🔴 Slot: full
+🕐 Último cambio: hace 12h 30min
+📊 Peticiones totales: 4,231
+❌ Errores consecutivos: 0
+📈 Max errores seguidos: 0
+🕐 Errores última hora: 0
+🔄 Último refresh URL: hace 3 min
+⏱ Uptime: 2 días 7h 31m
+🩺 Health: ✅ OK
+```
+
+Los emojis indican:
+
+| Icono | Estado |
+|-------|--------|
+| 🟢 | Hueco libre |
+| 🔴 | Beta llena |
+| ⚫ | Beta cerrada (404) |
+| ⚪ | Estado desconocido |
+| ✅ OK | Bot funcionando correctamente |
+| ❌ CAÍDO | Errores consecutivos detectados |
+
+### 5. Configurar variables de entorno
 
 Crea un archivo `.env` en la raíz del proyecto (nunca lo subas a Git):
 
@@ -82,7 +133,7 @@ TELEGRAM_CHAT_ID=123456789
 
 El resto de variables tienen valores por defecto que funcionan sin cambios.
 
-### 3. Probar localmente
+### 6. Probar localmente
 
 ```bash
 pip install -r requirements.txt
@@ -98,7 +149,7 @@ Deberías ver logs como:
 2026-07-18 12:00:31 [DEBUG] Status: full
 ```
 
-### 4. Desplegar en Render (gratis)
+### 7. Desplegar en Render (gratis)
 
 #### Opción A: Manual
 
@@ -125,7 +176,7 @@ Si incluyes `render.yaml` en el repo, Render lo detecta automáticamente:
 4. Render lee `render.yaml` y configura todo solo
 5. Añade las variables de entorno que faltan en el panel
 
-### 5. Mantener despierto con UptimeRobot
+### 8. Mantener despierto con UptimeRobot
 
 Render duerme los servicios gratuitos tras 15 minutos sin actividad. Para evitarlo:
 
@@ -150,6 +201,8 @@ UptimeRobot hará ping al `/health` del bot cada 5 minutos, evitando que Render 
 | `MIN_INTERVAL` | ❌ | `2` | Segundos mínimos entre peticiones a Apple |
 | `MAX_INTERVAL` | ❌ | `30` | Segundos máximos entre peticiones a Apple |
 | `URL_REFRESH_INTERVAL` | ❌ | `1800` | Segundos entre refrescos de URL desde WABetaInfo (1800 = 30 min) |
+| `ERROR_THRESHOLD` | ❌ | `3` | Errores consecutivos para disparar alerta por Telegram |
+| `POLL_INTERVAL` | ❌ | `5` | Segundos entre polling de comandos de Telegram |
 | `PORT` | ❌ | `8080` | Puerto del servidor HTTP para health checks |
 
 ## Preguntas frecuentes
@@ -173,6 +226,14 @@ Render duerme los servicios gratuitos a los 15 minutos si no reciben tráfico. P
 2. UptimeRobot haciendo ping cada 5 minutos
 
 Así el bot está activo 24/7.
+
+### ¿El bot avisa si algo falla?
+
+Sí. Si hay **3 o más errores consecutivos** (p.ej. Apple devuelve 503, timeout de red), el bot envía un Telegram con el error. Cuando se recupera, envía otro aviso. Si los fallos son esporádicos (1 sí, 1 no), no molesta con notificaciones.
+
+### ¿Para qué sirve el comando `/status`?
+
+Envía `/status` al bot de Telegram y te responde con información completa: URL monitorizada, estado del slot, peticiones totales, errores consecutivos, uptime, etc. Así puedes saber si el bot funciona sin necesidad de mirar los logs de Render.
 
 ### ¿Y si WABetaInfo está caído?
 
