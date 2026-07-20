@@ -142,10 +142,6 @@ async def check_testflight_status(client: httpx.AsyncClient, url: str) -> str:
         if "isn" in text and "accepting" in text and "tester" in text:
             return "full"
 
-        if "Accept" not in text and "Open TestFlight" not in text:
-            logger.debug("Page doesn't look like a TestFlight beta page")
-            return "unknown"
-
         return "open"
     except httpx.HTTPStatusError as exc:
         if exc.response.status_code == 404:
@@ -401,6 +397,7 @@ async def monitor_loop():
             try:
                 # ── URL Discovery (every N seconds) ──
                 if time.time() - url_last_refreshed > URL_REFRESH_INTERVAL:
+                    logger.info("Refreshing TestFlight URL from WABetaInfo...")
                     discovered = await discover_testflight_url(client)
                     if discovered and discovered != current_testflight_url:
                         old = current_testflight_url
@@ -486,6 +483,7 @@ async def monitor_loop():
                 logger.error("Unexpected error in main loop: %s", exc)
 
             delay = random.randint(MIN_INTERVAL, MAX_INTERVAL)
+            logger.info("Next check in ~%ds", delay)
             await asyncio.sleep(delay)
 
 # ─── Entry Point ─────────────────────────────────────────────────────────────

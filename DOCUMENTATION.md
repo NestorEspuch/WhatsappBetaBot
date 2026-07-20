@@ -33,10 +33,10 @@ El bot analiza el HTML que devuelve Apple en la URL de TestFlight:
 
 | Estado | Detección |
 |--------|-----------|
-| **Abierto** | El HTML contiene "Accept" o "Open TestFlight", *no* contiene "This beta is full" ni los substrings "isn" + "accepting" + "tester" |
+| **Abierto** | El HTML *no* contiene "This beta is full" ni los substrings "isn" + "accepting" + "tester" (cualquier contenido desconocido se asume abierto — preferimos falso positivo a perder un slot) |
 | **Lleno** | El HTML contiene "This beta is full" O los substrings "isn" + "accepting" + "tester" (funciona aunque Apple escape el apóstrofe como `&#39;`) |
 | **Cerrado** | La URL responde 404 (el enlace ya no existe) |
-| **Desconocido** | Error de red, timeout, o la página no parece una beta de TestFlight |
+| **Desconocido** | Error de red o timeout |
 
 ### Anti-bloqueo
 
@@ -147,7 +147,10 @@ Deberías ver logs como:
 2026-07-18 12:00:00 [INFO] Initial URL: https://testflight.apple.com/join/YcmGWyxV
 2026-07-18 12:00:01 [INFO] Initial status: full
 2026-07-18 12:00:31 [INFO] Check #1: full
+2026-07-18 12:00:31 [INFO] Next check in ~17s
 2026-07-18 12:00:51 [INFO] Health check: GET /health 200 -
+2030-01-15 18:00:00 [INFO] Refreshing TestFlight URL from WABetaInfo...
+2030-01-15 18:00:02 [INFO] URL confirmed: https://testflight.apple.com/join/YcmGWyxV
 ```
 
 ### 7. Desplegar en Render (gratis)
