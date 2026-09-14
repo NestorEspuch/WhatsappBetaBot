@@ -1,73 +1,73 @@
 # WhatsApp Beta Monitor
 
-Bot que monitoriza automaticamente la disponibilidad de la **beta de WhatsApp Messenger para iOS** en TestFlight y te avisa por Telegram cuando se abre un hueco.
+Bot that automatically monitors the availability of the **WhatsApp Messenger Beta for iOS** on TestFlight and notifies you via Telegram when a slot opens up.
 
-## Caracteristicas
+## Features
 
-- Monitoreo cada 2-30 segundos con intervalo aleatorio
-- Auto-descubrimiento de URL desde WABetaInfo (cada 30 min)
-- Notificaciones instantaneas por Telegram
-- Comando `/status` para consultar el estado
-- Alertas automaticas si el bot falla
-- Health check HTTP para UptimeRobot/Render
+- Monitoring every 2-30 seconds with random interval
+- Auto-discovery of TestFlight URL from WABetaInfo (every 30 min)
+- Instant Telegram notifications
+- `/status` command to check monitor status
+- Automatic alerts when the bot encounters errors
+- HTTP health check for UptimeRobot/Render
 
-## Requisitos
+## Requirements
 
 - Python 3.10+
-- Bot de Telegram (crear con @BotFather)
-- Tu chat ID de Telegram (obtener con @userinfobot)
+- Telegram bot (create with @BotFather)
+- Your Telegram chat ID (get it with @userinfobot)
 
-## Inicio rapido
+## Quick Start
 
 ```bash
 cp .env.example .env
-# Edita .env con tus credenciales:
-#   TELEGRAM_BOT_TOKEN=tu_token
-#   TELEGRAM_CHAT_ID=tu_chat_id
-#   TESTFLIGHT_URL= (opcional, se auto-descubre)
+# Edit .env with your credentials:
+#   TELEGRAM_BOT_TOKEN=your_token
+#   TELEGRAM_CHAT_ID=your_chat_id
+#   TESTFLIGHT_URL= (optional, auto-discovered)
 pip install -r requirements.txt
 python bot.py
 ```
 
-## Variables de entorno
+## Environment Variables
 
-| Variable | Obligatoria | Descripcion |
-|----------|-------------|-------------|
-| `TELEGRAM_BOT_TOKEN` | Si | Token de tu bot de Telegram |
-| `TELEGRAM_CHAT_ID` | Si | Tu chat ID numerico |
-| `TESTFLIGHT_URL` | No | URL de TestFlight (se auto-descubre si esta vacia) |
-| `WABETAINFO_URL` | No | URL de WABetaInfo para descubrir enlaces |
-| `MIN_INTERVAL` | No | Intervalo minimo entre chequeos (default: 2s) |
-| `MAX_INTERVAL` | No | Intervalo maximo entre chequeos (default: 30s) |
-| `URL_REFRESH_INTERVAL` | No | Segundos entre refresh de URL (default: 1800s) |
-| `ERROR_THRESHOLD` | No | Errores antes de alertar (default: 3) |
-| `POLL_INTERVAL` | No | Segundos entre polling de Telegram (default: 5) |
-| `PORT` | No | Puerto del health check (default: 8080) |
+| Variable | Required | Description |
+|----------|----------|-------------|
+| `TELEGRAM_BOT_TOKEN` | Yes | Your Telegram bot token |
+| `TELEGRAM_CHAT_ID` | Yes | Your numeric chat ID |
+| `TESTFLIGHT_URL` | No | TestFlight URL (auto-discovered if empty) |
+| `WABETAINFO_URL` | No | WABetaInfo URL for link discovery |
+| `MIN_INTERVAL` | No | Minimum interval between checks (default: 2s) |
+| `MAX_INTERVAL` | No | Maximum interval between checks (default: 30s) |
+| `URL_REFRESH_INTERVAL` | No | Seconds between URL refresh (default: 1800s) |
+| `ERROR_THRESHOLD` | No | Errors before alerting (default: 3) |
+| `POLL_INTERVAL` | No | Seconds between Telegram polling (default: 5) |
+| `PORT` | No | Health check port (default: 8080) |
 
-## Como funciona
+## How It Works
 
-1. **Arranque**: Si no hay URL configurada, el bot la descubre automaticamente desde WABetaInfo
-2. **Monitoreo principal**: Cada 2-30 segundos consulta el estado de la beta en TestFlight
-3. **Actualizacion de URL**: Cada 30 minutos obtiene la URL actualizada desde WABetaInfo
-4. **Notificaciones**: Envia un Telegram en cuanto detecta un hueco libre
-5. **Comandos**: `/status` para consultar el estado del monitor
-6. **Alertas**: Notificaciones automaticas si el bot detecta errores consecutivos
+1. **Startup**: If no URL is configured, the bot automatically discovers it from WABetaInfo
+2. **Main monitoring**: Every 2-30 seconds it checks the beta status on TestFlight
+3. **URL updates**: Every 30 minutes it fetches the updated URL from WABetaInfo
+4. **Notifications**: Sends a Telegram message as soon as a free slot is detected
+5. **Commands**: `/status` to check the monitor status
+6. **Alerts**: Automatic notifications when the bot detects consecutive errors
 
-## Despliegue
+## Deployment
 
-### Render (gratis)
+### Render (free)
 
-1. Sube el repo a GitHub
-2. Crea un servicio web en Render
-3. Configura las variables de entorno en el dashboard
-4. El bot se despliega automaticamente
+1. Push the repo to GitHub
+2. Create a web service on Render
+3. Configure the environment variables in the dashboard
+4. The bot deploys automatically
 
-### UptimeRobot (gratis)
+### UptimeRobot (free)
 
-1. Crea una cuenta en UptimeRobot
-2. Anade un monitor HTTP apuntando a tu URL de Render
-3. Configura un ping cada 5 minutos
+1. Create an account on UptimeRobot
+2. Add an HTTP monitor pointing to your Render URL
+3. Set up a ping every 5 minutes
 
-## Licencia
+## License
 
-Este proyecto utiliza la [PolyForm Noncommercial License 1.0.0](LICENSE).
+This project uses the [PolyForm Noncommercial License 1.0.0](LICENSE).
