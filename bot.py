@@ -38,10 +38,7 @@ load_dotenv()
 
 TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN", "")
 TELEGRAM_CHAT_ID = os.getenv("TELEGRAM_CHAT_ID", "")
-DEFAULT_TESTFLIGHT_URL = os.getenv(
-    "TESTFLIGHT_URL",
-    "https://testflight.apple.com/join/YcmGWyxV",
-)
+DEFAULT_TESTFLIGHT_URL = os.getenv("TESTFLIGHT_URL", "")
 WABETAINFO_URL = os.getenv(
     "WABETAINFO_URL",
     "https://wabetainfo.com/wa-testflight/",
@@ -393,6 +390,19 @@ async def monitor_loop():
         timeout=httpx.Timeout(15.0),
         limits=httpx.Limits(max_keepalive_connections=5),
     ) as client:
+        # ── Auto-discovery on startup if no URL configured ──
+        if not current_testflight_url:
+            logger.info("No TestFlight URL configured, discovering from WABetaInfo...")
+            while True:
+                discovered = await discover_testflight_url(client)
+                if discovered:
+                    current_testflight_url = discovered
+                    logger.info("URL discovered: %s", discovered)
+                    await notify_url_changed(client, "(none)", discovered)
+                    break
+                logger.warning("No URL found, retrying in 60s...")
+                await asyncio.sleep(60)
+
         while True:
             try:
                 # ── URL Discovery (every N seconds) ──
